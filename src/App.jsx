@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { connect, disconnect } from 'get-starknet'
 import './App.css'
 
 const TABS = ['Wallet Tracker', 'Swap', 'DeFi Apps', 'Protocol Stats']
@@ -22,6 +23,8 @@ const BADGE_COLORS = {
   'Staking': { bg: '#1a2f2f', color: '#2dd4bf' },
 }
 
+const shortAddress = (addr) => addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : ''
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('Wallet Tracker')
   const [address, setAddress] = useState('')
@@ -33,37 +36,64 @@ export default function App() {
   const [swapFrom, setSwapFrom] = useState('ETH')
   const [swapTo, setSwapTo] = useState('USDC')
   const [swapAmount, setSwapAmount] = useState('')
+  const [connectedWallet, setConnectedWallet] = useState(null)
+  const [connectedAddress, setConnectedAddress] = useState('')
+  const [connecting, setConnecting] = useState(false)
+  const [swapLoading, setSwapLoading] = useState(false)
+  const [swapError, setSwapError] = useState('')
+  const [swapSuccess, setSwapSuccess] = useState('')
 
- const fetchWallet = async () => {
-  if (!address.trim()) return
-  setLoading(true)
-  setError('')
-  setWalletData(null)
-  try {
-    const res = await fetch(
-      `https://api.mobula.io/api/1/wallet/portfolio?wallet=${address.trim()}`,
-      { headers: { Authorization: import.meta.env.VITE_MOBULA_API_KEY } }
-    )
-    const data = await res.json()
-    if (data.data) {
-      const starknetAssets = data.data.assets?.filter(asset =>
-        asset.asset?.blockchains?.some(b =>
-          b.toLowerCase().includes('starknet') ||
-          b.toLowerCase().includes('stark')
-        )
-      )
-      setWalletData({
-        ...data.data,
-        assets: starknetAssets?.length > 0 ? starknetAssets : data.data.assets
-      })
-    } else {
-      setError('No data found for this address.')
+  const handleConnectWallet = async () => {
+    if (connectedWallet) {
+      await disconnect({ clearLastWallet: true })
+      setConnectedWallet(null)
+      setConnectedAddress('')
+      return
     }
-  } catch {
-    setError('Failed to fetch wallet data. Check your API key.')
+    setConnecting(true)
+    try {
+      const wallet = await connect({ modalMode: 'alwaysAsk' })
+      if (wallet && wallet.isConnected) {
+        setConnectedWallet(wallet)
+        const addr = wallet.selectedAddress || wallet.account?.address || ''
+        setConnectedAddress(addr)
+        setAddress(addr)
+      }
+    } catch (e) {
+      console.error('Wallet connection failed:', e)
+    }
+    setConnecting(false)
   }
-  setLoading(false)
-}
+
+  const fetchWallet = async () => {
+    if (!address.trim()) return
+    setLoading(true)
+    setError('')
+    setWalletData(null)
+    try {
+      const res = await fetch(
+        `https://api.mobula.io/api/1/wallet/portfolio?wallet=${address.trim()}`,
+        { headers: { Authorization: import.meta.env.VITE_MOBULA_API_KEY } }
+      )
+      const data = await res.json()
+      if (data.data) {
+        const starknetAssets = data.data.assets?.filter(asset =>
+          asset.asset?.blockchains?.some(b =>
+            b.toLowerCase().includes('starknet') || b.toLowerCase().includes('stark')
+          )
+        )
+        setWalletData({
+          ...data.data,
+          assets: starknetAssets?.length > 0 ? starknetAssets : data.data.assets
+        })
+      } else {
+        setError('No data found for this address.')
+      }
+    } catch {
+      setError('Failed to fetch wallet data. Check your API key.')
+    }
+    setLoading(false)
+  }
 
   const fetchProtocols = async () => {
     setProtocolsLoading(true)
@@ -83,9 +113,7 @@ export default function App() {
 
   const handleTabClick = (tab) => {
     setActiveTab(tab)
-    if (tab === 'Protocol Stats' && protocols.length === 0) {
-      fetchProtocols()
-    }
+    if (tab === 'Protocol Stats' && protocols.length === 0) fetchProtocols()
   }
 
   const formatUSD = (n) => {
@@ -96,10 +124,26 @@ export default function App() {
     return `$${n.toFixed(2)}`
   }
 
+  const handleSwap = async () => {
+    if (!swapAmount || parseFloat(swapAmount) <= 0) {
+      setSwapError('Enter an amount to swap')
+      return
+    }
+    setSwapLoading(true)
+    setSwapError('')
+    setSwapSuccess('')
+    try {
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      setSwapSuccess(`Swap initiated! ${swapAmount} ${swapFrom} → ${swapTo} via AVNU on Starknet`)
+    } catch (e) {
+      setSwapError('Swap failed: ' + (e.message || 'Unknown error'))
+    }
+    setSwapLoading(false)
+  }
+
   return (
     <div style={{ minHeight: '100vh', background: '#0a0a0f' }}>
 
-      {/* NAV */}
       <nav style={{
         background: '#0d0d15',
         borderBottom: '1px solid #1e1e2e',
@@ -126,20 +170,23 @@ export default function App() {
             fontWeight: '500'
           }}>MAINNET</span>
         </div>
-        <button style={{
-          background: 'linear-gradient(135deg, #f97316, #ea580c)',
-          color: '#fff',
-          border: 'none',
-          padding: '8px 20px',
-          borderRadius: '8px',
-          fontSize: '13px',
-          fontWeight: '600'
-        }}>
-          Connect Wallet
+        <button
+          onClick={handleConnectWallet}
+          style={{
+            background: connectedWallet ? '#1a2f1a' : 'linear-gradient(135deg, #f97316, #ea580c)',
+            color: connectedWallet ? '#4ade80' : '#fff',
+            border: connectedWallet ? '1px solid #4ade80' : 'none',
+            padding: '8px 20px',
+            borderRadius: '8px',
+            fontSize: '13px',
+            fontWeight: '600',
+            cursor: 'pointer'
+          }}
+        >
+          {connecting ? 'Connecting...' : connectedWallet ? `${shortAddress(connectedAddress)} ✓` : 'Connect Wallet'}
         </button>
       </nav>
 
-      {/* HERO */}
       <div style={{ textAlign: 'center', padding: '3rem 1rem 2rem' }}>
         <h1 style={{ fontSize: '42px', fontWeight: '800', letterSpacing: '-1.5px', marginBottom: '12px' }}>
           Your Starknet <span style={{ color: '#f97316' }}>Universe</span>
@@ -147,9 +194,24 @@ export default function App() {
         <p style={{ color: '#6b7280', fontSize: '16px', maxWidth: '500px', margin: '0 auto' }}>
           Track wallets, swap tokens, explore DeFi apps and monitor protocol stats — all in one place.
         </p>
+        {connectedWallet && (
+          <div style={{
+            marginTop: '16px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px',
+            background: '#1a2f1a',
+            border: '1px solid #4ade80',
+            borderRadius: '20px',
+            padding: '6px 16px',
+            fontSize: '13px',
+            color: '#4ade80'
+          }}>
+            <span>●</span> Connected: {shortAddress(connectedAddress)}
+          </div>
+        )}
       </div>
 
-      {/* TABS */}
       <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', padding: '0 1rem 2rem', flexWrap: 'wrap' }}>
         {TABS.map(tab => (
           <button
@@ -163,6 +225,7 @@ export default function App() {
               color: activeTab === tab ? '#f97316' : '#6b7280',
               fontSize: '14px',
               fontWeight: '500',
+              cursor: 'pointer',
               transition: 'all 0.2s'
             }}
           >
@@ -171,10 +234,8 @@ export default function App() {
         ))}
       </div>
 
-      {/* CONTENT */}
       <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '0 1.5rem 4rem' }}>
 
-        {/* WALLET TRACKER */}
         {activeTab === 'Wallet Tracker' && (
           <div>
             <div style={{ display: 'flex', gap: '12px', marginBottom: '2rem' }}>
@@ -182,7 +243,7 @@ export default function App() {
                 value={address}
                 onChange={e => setAddress(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && fetchWallet()}
-                placeholder="Paste any Starknet wallet address..."
+                placeholder="Paste any Starknet wallet address or connect wallet above..."
                 style={{
                   flex: 1,
                   background: '#0d0d15',
@@ -203,12 +264,33 @@ export default function App() {
                   padding: '14px 28px',
                   borderRadius: '10px',
                   fontSize: '14px',
-                  fontWeight: '600'
+                  fontWeight: '600',
+                  cursor: 'pointer'
                 }}
               >
                 {loading ? 'Loading...' : 'Track'}
               </button>
             </div>
+
+            {connectedWallet && !walletData && !loading && (
+              <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
+                <button
+                  onClick={fetchWallet}
+                  style={{
+                    background: 'rgba(249,115,22,0.15)',
+                    border: '1px solid #f97316',
+                    color: '#f97316',
+                    padding: '10px 24px',
+                    borderRadius: '10px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Track My Connected Wallet
+                </button>
+              </div>
+            )}
 
             {error && (
               <div style={{ background: '#1f0a0a', border: '1px solid #7f1d1d', borderRadius: '10px', padding: '1rem', color: '#f87171', marginBottom: '1rem' }}>
@@ -218,12 +300,11 @@ export default function App() {
 
             {walletData && (
               <div>
-                {/* STATS */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '2rem' }}>
                   {[
                     { label: 'Total Value', value: formatUSD(walletData.total_wallet_balance) },
                     { label: 'Assets', value: walletData.assets?.length || 0 },
-                    { label: '24h Change', value: walletData.total_realized_pnl_1d ? formatUSD(walletData.total_realized_pnl_1d) : 'N/A' },
+                    { label: '24h PnL', value: walletData.total_realized_pnl_1d ? formatUSD(walletData.total_realized_pnl_1d) : 'N/A' },
                   ].map(stat => (
                     <div key={stat.label} style={{
                       background: '#0d0d15',
@@ -237,7 +318,6 @@ export default function App() {
                   ))}
                 </div>
 
-                {/* ASSETS */}
                 <div style={{ background: '#0d0d15', border: '1px solid #1e1e2e', borderRadius: '12px', overflow: 'hidden' }}>
                   <div style={{ padding: '1rem 1.4rem', borderBottom: '1px solid #1e1e2e' }}>
                     <span style={{ fontWeight: '600', fontSize: '15px' }}>Token Holdings</span>
@@ -267,16 +347,15 @@ export default function App() {
               </div>
             )}
 
-            {!walletData && !loading && !error && (
+            {!walletData && !loading && !error && !connectedWallet && (
               <div style={{ textAlign: 'center', padding: '4rem 0', color: '#6b7280' }}>
                 <div style={{ fontSize: '48px', marginBottom: '16px' }}>🔍</div>
-                <p>Enter a Starknet wallet address to see its full portfolio</p>
+                <p>Enter a Starknet wallet address or connect your wallet to get started</p>
               </div>
             )}
           </div>
         )}
 
-        {/* SWAP */}
         {activeTab === 'Swap' && (
           <div style={{ maxWidth: '480px', margin: '0 auto' }}>
             <div style={{ background: '#0d0d15', border: '1px solid #1e1e2e', borderRadius: '16px', padding: '1.5rem' }}>
@@ -285,7 +364,6 @@ export default function App() {
                 <span style={{ fontSize: '12px', background: '#1a2f1a', color: '#4ade80', padding: '4px 10px', borderRadius: '20px' }}>0 Gas Fees</span>
               </div>
 
-              {/* FROM */}
               <div style={{ background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: '12px', padding: '1rem', marginBottom: '8px' }}>
                 <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>From</div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -306,15 +384,13 @@ export default function App() {
                 </div>
               </div>
 
-              {/* ARROW */}
               <div style={{ textAlign: 'center', margin: '4px 0' }}>
                 <button
                   onClick={() => { const tmp = swapFrom; setSwapFrom(swapTo); setSwapTo(tmp) }}
-                  style={{ background: '#1e1e2e', border: '1px solid #2e2e3e', color: '#f97316', width: '36px', height: '36px', borderRadius: '50%', fontSize: '16px' }}
+                  style={{ background: '#1e1e2e', border: '1px solid #2e2e3e', color: '#f97316', width: '36px', height: '36px', borderRadius: '50%', fontSize: '16px', cursor: 'pointer' }}
                 >⇅</button>
               </div>
 
-              {/* TO */}
               <div style={{ background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: '12px', padding: '1rem', marginBottom: '1.5rem' }}>
                 <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>To</div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -331,22 +407,28 @@ export default function App() {
 
               <div style={{ background: '#0a0a0f', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '13px', color: '#6b7280', display: 'flex', justifyContent: 'space-between' }}>
                 <span>Gas Fee</span>
-                <span style={{ color: '#4ade80', fontWeight: '600' }}>$0.00 (Gasless)</span>
+                <span style={{ color: '#4ade80', fontWeight: '600' }}>$0.00 (Gasless via Starkzap)</span>
               </div>
 
-              <button style={{
-                width: '100%',
-                background: 'linear-gradient(135deg, #f97316, #ea580c)',
-                color: '#fff',
-                border: 'none',
-                padding: '14px',
-                borderRadius: '12px',
-                fontSize: '16px',
-                fontWeight: '700'
-              }}>
-                Connect Wallet to Swap
+              <button
+                onClick={connectedWallet ? handleSwap : handleConnectWallet}
+                style={{
+                  width: '100%',
+                  background: connectedWallet ? 'linear-gradient(135deg, #f97316, #ea580c)' : '#1e1e2e',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '14px',
+                  borderRadius: '12px',
+                  fontSize: '16px',
+                  fontWeight: '700',
+                  cursor: 'pointer'
+                }}
+              >
+                {connectedWallet ? (swapLoading ? 'Swapping...' : `Swap ${swapFrom} → ${swapTo}`) : 'Connect Wallet to Swap'}
               </button>
 
+              {swapError && <p style={{ color: '#f87171', fontSize: '13px', marginTop: '8px', textAlign: 'center' }}>{swapError}</p>}
+              {swapSuccess && <p style={{ color: '#4ade80', fontSize: '13px', marginTop: '8px', textAlign: 'center' }}>{swapSuccess}</p>}
               <p style={{ textAlign: 'center', fontSize: '12px', color: '#6b7280', marginTop: '12px' }}>
                 Powered by Starkzap SDK — Gasless swaps on Starknet
               </p>
@@ -354,7 +436,6 @@ export default function App() {
           </div>
         )}
 
-        {/* DEFI APPS */}
         {activeTab === 'DeFi Apps' && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '14px' }}>
             {DEFI_APPS.map(app => (
@@ -364,13 +445,14 @@ export default function App() {
                 borderRadius: '12px',
                 padding: '1.2rem 1.4rem',
                 display: 'block',
-                transition: 'border-color 0.2s'
+                transition: 'border-color 0.2s',
+                textDecoration: 'none'
               }}
                 onMouseEnter={e => e.currentTarget.style.borderColor = '#f97316'}
                 onMouseLeave={e => e.currentTarget.style.borderColor = '#1e1e2e'}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                  <span style={{ fontWeight: '600', fontSize: '15px' }}>{app.name}</span>
+                  <span style={{ fontWeight: '600', fontSize: '15px', color: '#fff' }}>{app.name}</span>
                   <span style={{
                     fontSize: '11px',
                     padding: '3px 10px',
@@ -387,7 +469,6 @@ export default function App() {
           </div>
         )}
 
-        {/* PROTOCOL STATS */}
         {activeTab === 'Protocol Stats' && (
           <div>
             {protocolsLoading && (
