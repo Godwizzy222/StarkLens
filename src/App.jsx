@@ -125,22 +125,54 @@ export default function App() {
   }
 
   const handleSwap = async () => {
-    if (!swapAmount || parseFloat(swapAmount) <= 0) {
-      setSwapError('Enter an amount to swap')
+  if (!swapAmount || parseFloat(swapAmount) <= 0) {
+    setSwapError('Enter an amount to swap')
+    return
+  }
+  setSwapLoading(true)
+  setSwapError('')
+  setSwapSuccess('')
+  try {
+    const TOKENS = {
+      ETH:  { address: '0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7', decimals: 18 },
+      STRK: { address: '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d', decimals: 18 },
+      USDC: { address: '0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8', decimals: 6 },
+      USDT: { address: '0x068f5c6a61780768455de69077e07e89787839bf8166decfbf92b645209c0fb8', decimals: 6 },
+      DAI:  { address: '0x00da114221cb83fa859dbdb4c44beeaa0bb37c7537ad5ae66fe5e0efd20e6eb3', decimals: 18 },
+    }
+    const fromToken = TOKENS[swapFrom] || TOKENS.ETH
+    const toToken = TOKENS[swapTo] || TOKENS.USDC
+    const sellAmount = BigInt(Math.floor(parseFloat(swapAmount) * 10 ** fromToken.decimals))
+
+    const { getQuotes, executeSwap } = await import('@avnu/avnu-sdk')
+    const quotes = await getQuotes({
+      sellTokenAddress: fromToken.address,
+      buyTokenAddress: toToken.address,
+      sellAmount,
+      takerAddress: connectedAddress,
+    })
+
+    if (!quotes || quotes.length === 0) {
+      setSwapError('No quote found. Try a different pair or amount.')
+      setSwapLoading(false)
       return
     }
-    setSwapLoading(true)
-    setSwapError('')
-    setSwapSuccess('')
-    try {
-      await new Promise(resolve => setTimeout(resolve, 2000))
-      setSwapSuccess(`Swap initiated! ${swapAmount} ${swapFrom} → ${swapTo} via AVNU on Starknet`)
-    } catch (e) {
-      setSwapError('Swap failed: ' + (e.message || 'Unknown error'))
-    }
-    setSwapLoading(false)
-  }
 
+    const quote = quotes[0]
+    const buyAmount = (Number(BigInt(quote.buyAmount)) / 10 ** toToken.decimals).toFixed(4)
+    setSwapSuccess(`${swapAmount} ${swapFrom} ≈ ${buyAmount} ${swapTo} — Executing...`)
+
+    const result = await executeSwap({
+      provider: connectedWallet.account,
+      quote,
+      slippage: 0.005,
+    })
+    setSwapSuccess(`Swap successful! TX: ${result.transactionHash.slice(0, 16)}...`)
+  } catch (e) {
+    setSwapError('Swap failed: ' + (e.message || 'Unknown error'))
+  }
+  setSwapLoading(false)
+}
   return (
     <div style={{ minHeight: '100vh', background: '#0a0a0f' }}>
 
